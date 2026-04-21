@@ -309,20 +309,20 @@ def build_state_space(h, psi, theta_p, theta_w, phi_b, lambda_rot=0.3,
         B[6, 8] = 0.7  # 70% through government spending
         B[2, 8] = 0.8  # 80% direct boost to investment (infrastructure investment)
         # More persistent - handled in A matrix with higher rho_g for infrastructure
-    # Labor tax cuts: negative shock on labor state (tax reduction)
+    # Labor tax cuts: boost labor supply (tax reduction)
     elif shock_type == "tau_labor":
-        B[3, 3] = -1.0  # labor supply increases when taxes cut
+        B[3, 3] = 1.0  # labor supply increases when taxes cut
     # Capital tax cuts: boost investment returns
     elif shock_type == "tau_capital":
-        B[2, 4] = -1.0  # investment increases when capital taxes cut
+        B[2, 4] = 1.0  # investment increases when capital taxes cut
     # Consumption tax cuts: boost consumption directly
     elif shock_type == "tau_consumption":
-        B[1, 5] = -0.8  # consumption increases when VAT/sales taxes cut
-        B[0, 5] = -0.2  # some direct output effect
+        B[1, 5] = 0.8  # consumption increases when VAT/sales taxes cut
+        B[0, 5] = 0.2  # some direct output effect
     # Corporate profit tax cuts: boost investment and dividends
     elif shock_type == "tau_corporate":
-        B[2, 4] = -0.7  # investment boost (similar to capital tax but corporate-focused)
-        B[1, 5] = -0.3  # consumption effect from higher dividends/profits
+        B[2, 4] = 0.7  # investment boost (similar to capital tax but corporate-focused)
+        B[1, 5] = 0.3  # consumption effect from higher dividends/profits
     # Lump-sum transfers: direct transfers to households (powerful with ROT households)
     elif shock_type == "lump_sum_transfer":
         B[1, 9] = lambda_rot * 0.9  # strong effect on ROT households
@@ -881,7 +881,17 @@ with tab2:
     r_irf = y_irf[7, :]         # Interest Rate
     a_irf = y_irf[8, :]         # Technology
 
-    impact_mult, cum_mult, drag_horizon = compute_multipliers(y_gap_irf, g_irf, beta=0.99, impact_period=impact_period)
+    # For tax shocks, use the shock path itself (since tax shocks don't affect g directly)
+    # For spending shocks, use government spending response
+    tax_shocks = ["tau_labor", "tau_capital", "tau_consumption", "tau_corporate"]
+    if shock_type in tax_shocks:
+        # Create shock path: impulse of 0.01 at t=0, then zeros
+        shock_path = np.zeros_like(y_gap_irf)
+        shock_path[0] = 0.01  # The shock size used in impulse_response
+    else:
+        shock_path = g_irf  # Use government spending for spending shocks
+
+    impact_mult, cum_mult, drag_horizon = compute_multipliers(y_gap_irf, shock_path, beta=0.99, impact_period=impact_period)
 
     st.subheader("📊 Fiscal Multipliers & Key Statistics")
     colm1, colm2, colm3 = st.columns(3)
