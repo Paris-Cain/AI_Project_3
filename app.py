@@ -2,6 +2,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from scipy.linalg import eig
 
@@ -570,47 +572,126 @@ with tab1:
     st.markdown("### 💡 AI-Generated Economic Interpretation")
     st.write(interpretation)
 
-    # Simple time-series plots
-    st.markdown("### 📈 Simulated Time Series (Selected Variables)")
+    # Interactive time-series plots with hover functionality
+    st.markdown("### 📈 Simulated Time Series (Interactive - Hover for Values)")
 
-    fig, axes = plt.subplots(4, 1, figsize=(12, 9), sharex=True)
+    # Create subplots with Plotly
+    fig = make_subplots(
+        rows=4, cols=1,
+        shared_xaxes=True,
+        subplot_titles=("Output Gap", "Consumption", "Investment", "Inflation"),
+        vertical_spacing=0.05
+    )
+
     t_grid = np.arange(T_sim)
 
-    axes[0].plot(t_grid, y_sim[0, :], color="cyan", linewidth=1.5)
-    axes[0].set_ylabel("Output Gap", color="white")
-    axes[0].grid(True, alpha=0.3)
-    axes[0].axhline(0, color="white", linewidth=0.5, linestyle="--")
+    # Output Gap
+    fig.add_trace(
+        go.Scatter(
+            x=t_grid,
+            y=y_sim[0, :],
+            mode='lines',
+            name='Output Gap',
+            line=dict(color='cyan', width=2),
+            hovertemplate='Period: %{x}<br>Value: %{y:.4f}<extra></extra>'
+        ),
+        row=1, col=1
+    )
 
-    axes[1].plot(t_grid, y_sim[1, :], color="orange", linewidth=1.5, label="Consumption")
-    axes[1].plot(t_grid, y_sim[0, :], color="cyan", linewidth=1, alpha=0.5, label="Output (ref)")
-    axes[1].set_ylabel("Consumption", color="white")
-    axes[1].legend(loc="upper right", fontsize=9)
-    axes[1].grid(True, alpha=0.3)
-    axes[1].axhline(0, color="white", linewidth=0.5, linestyle="--")
+    # Consumption with reference line
+    fig.add_trace(
+        go.Scatter(
+            x=t_grid,
+            y=y_sim[1, :],
+            mode='lines',
+            name='Consumption',
+            line=dict(color='orange', width=2),
+            hovertemplate='Period: %{x}<br>Consumption: %{y:.4f}<extra></extra>'
+        ),
+        row=2, col=1
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=t_grid,
+            y=y_sim[0, :],
+            mode='lines',
+            name='Output (ref)',
+            line=dict(color='cyan', width=1, dash='dot'),
+            opacity=0.5,
+            hovertemplate='Period: %{x}<br>Output: %{y:.4f}<extra></extra>'
+        ),
+        row=2, col=1
+    )
 
-    axes[2].plot(t_grid, y_sim[2, :], color="magenta", linewidth=1.5, label="Investment")
-    axes[2].plot(t_grid, y_sim[0, :], color="cyan", linewidth=1, alpha=0.5, label="Output (ref)")
-    axes[2].set_ylabel("Investment", color="white")
-    axes[2].legend(loc="upper right", fontsize=9)
-    axes[2].grid(True, alpha=0.3)
-    axes[2].axhline(0, color="white", linewidth=0.5, linestyle="--")
+    # Investment with reference line
+    fig.add_trace(
+        go.Scatter(
+            x=t_grid,
+            y=y_sim[2, :],
+            mode='lines',
+            name='Investment',
+            line=dict(color='magenta', width=2),
+            hovertemplate='Period: %{x}<br>Investment: %{y:.4f}<extra></extra>'
+        ),
+        row=3, col=1
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=t_grid,
+            y=y_sim[0, :],
+            mode='lines',
+            name='Output (ref)',
+            line=dict(color='cyan', width=1, dash='dot'),
+            opacity=0.5,
+            showlegend=False,
+            hovertemplate='Period: %{x}<br>Output: %{y:.4f}<extra></extra>'
+        ),
+        row=3, col=1
+    )
 
-    axes[3].plot(t_grid, y_sim[4, :], color="#00ff00", linewidth=1.5)
-    axes[3].set_ylabel("Inflation", color="white")
-    axes[3].set_xlabel("Time (periods)", color="white")
-    axes[3].grid(True, alpha=0.3)
-    axes[3].axhline(0, color="white", linewidth=0.5, linestyle="--")
+    # Inflation
+    fig.add_trace(
+        go.Scatter(
+            x=t_grid,
+            y=y_sim[4, :],
+            mode='lines',
+            name='Inflation',
+            line=dict(color='#00ff00', width=2),
+            hovertemplate='Period: %{x}<br>Inflation: %{y:.4f}<extra></extra>'
+        ),
+        row=4, col=1
+    )
 
-    fig.patch.set_facecolor("#0b1020")
-    for ax in axes:
-        ax.set_facecolor("#111827")
-        ax.tick_params(colors="white")
-        for spine in ax.spines.values():
-            spine.set_color("white")
-        ax.yaxis.label.set_color("white")
-        ax.xaxis.label.set_color("white")
+    # Update layout for dark theme
+    fig.update_layout(
+        height=800,
+        showlegend=True,
+        paper_bgcolor='#0b1020',
+        plot_bgcolor='#111827',
+        font=dict(color='white'),
+        hovermode='x unified',  # Shows all values at cursor position
+        xaxis4=dict(title="Time (periods)", title_font=dict(color='white')),
+    )
 
-    st.pyplot(fig)
+    # Update axes styling
+    for i in range(1, 5):
+        fig.update_xaxes(
+            gridcolor='rgba(255,255,255,0.1)',
+            zerolinecolor='rgba(255,255,255,0.5)',
+            row=i, col=1
+        )
+        fig.update_yaxes(
+            gridcolor='rgba(255,255,255,0.1)',
+            zerolinecolor='rgba(255,255,255,0.5)',
+            row=i, col=1
+        )
+
+    # Add horizontal reference lines
+    for i in range(1, 5):
+        fig.add_hline(y=0, line=dict(color='white', width=1, dash='dash'),
+                     opacity=0.5, row=i, col=1)
+
+    st.plotly_chart(fig, use_container_width=True)
 
 
 # =========================
@@ -704,55 +785,128 @@ with tab2:
     else:
         colm3.metric("Fiscal Drag Horizon", "Beyond horizon")
 
-    # IRF plots
-    st.markdown("### 📉 Impulse Response Functions (40-Quarter Horizon)")
+    # Interactive IRF plots with hover functionality
+    st.markdown("### 📉 Impulse Response Functions (Interactive - Hover for Values)")
 
-    fig2, axes2 = plt.subplots(2, 2, figsize=(13, 8))
+    # Create subplots with Plotly
+    fig_irf = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=("Output Gap Response", "Government Debt Response",
+                       "Consumption & Investment Response", "Inflation & Labor Response"),
+        vertical_spacing=0.1,
+        horizontal_spacing=0.1
+    )
+
     t_grid_irf = np.arange(T_irf)
 
-    # Output & Debt
-    axes2[0, 0].plot(t_grid_irf, y_gap_irf, label="Output", color="cyan", linewidth=2.5)
-    axes2[0, 0].axhline(0, color="white", linewidth=0.8)
-    axes2[0, 0].set_title("Output Gap Response", fontsize=12, fontweight="bold")
-    axes2[0, 0].grid(True, alpha=0.3)
-    axes2[0, 0].set_ylabel("Deviation from SS")
+    # Output Gap Response
+    fig_irf.add_trace(
+        go.Scatter(
+            x=t_grid_irf,
+            y=y_gap_irf,
+            mode='lines+markers',
+            name='Output Gap',
+            line=dict(color='cyan', width=3),
+            marker=dict(size=4),
+            hovertemplate='Quarter: %{x}<br>Output Gap: %{y:.4f}<extra></extra>'
+        ),
+        row=1, col=1
+    )
 
-    axes2[0, 1].plot(t_grid_irf, b_irf, label="Debt", color="yellow", linewidth=2.5)
-    axes2[0, 1].axhline(0, color="white", linewidth=0.8)
-    axes2[0, 1].set_title("Government Debt Response", fontsize=12, fontweight="bold")
-    axes2[0, 1].grid(True, alpha=0.3)
-    axes2[0, 1].set_ylabel("Deviation from SS")
+    # Government Debt Response
+    fig_irf.add_trace(
+        go.Scatter(
+            x=t_grid_irf,
+            y=b_irf,
+            mode='lines+markers',
+            name='Government Debt',
+            line=dict(color='yellow', width=3),
+            marker=dict(size=4),
+            hovertemplate='Quarter: %{x}<br>Gov Debt: %{y:.4f}<extra></extra>'
+        ),
+        row=1, col=2
+    )
 
-    # Consumption & Investment
-    axes2[1, 0].plot(t_grid_irf, c_irf, label="Consumption", color="orange", linewidth=2, marker="o", markersize=3)
-    axes2[1, 0].plot(t_grid_irf, i_irf, label="Investment", color="magenta", linewidth=2, marker="s", markersize=3)
-    axes2[1, 0].axhline(0, color="white", linewidth=0.8)
-    axes2[1, 0].set_title("Consumption & Investment Response", fontsize=12, fontweight="bold")
-    axes2[1, 0].legend(fontsize=10)
-    axes2[1, 0].grid(True, alpha=0.3)
-    axes2[1, 0].set_ylabel("Deviation from SS")
+    # Consumption & Investment Response
+    fig_irf.add_trace(
+        go.Scatter(
+            x=t_grid_irf,
+            y=c_irf,
+            mode='lines+markers',
+            name='Consumption',
+            line=dict(color='orange', width=2),
+            marker=dict(symbol='circle', size=5),
+            hovertemplate='Quarter: %{x}<br>Consumption: %{y:.4f}<extra></extra>'
+        ),
+        row=2, col=1
+    )
+    fig_irf.add_trace(
+        go.Scatter(
+            x=t_grid_irf,
+            y=i_irf,
+            mode='lines+markers',
+            name='Investment',
+            line=dict(color='magenta', width=2),
+            marker=dict(symbol='square', size=5),
+            hovertemplate='Quarter: %{x}<br>Investment: %{y:.4f}<extra></extra>'
+        ),
+        row=2, col=1
+    )
 
-    # Inflation & Labor
-    axes2[1, 1].plot(t_grid_irf, pi_irf, label="Inflation", color="#00ff00", linewidth=2, marker="d", markersize=3)
-    axes2[1, 1].plot(t_grid_irf, n_irf, label="Labor", color="#ff00ff", linewidth=2, marker="^", markersize=3)
-    axes2[1, 1].axhline(0, color="white", linewidth=0.8)
-    axes2[1, 1].set_title("Inflation & Labor Response", fontsize=12, fontweight="bold")
-    axes2[1, 1].legend(fontsize=10)
-    axes2[1, 1].grid(True, alpha=0.3)
-    axes2[1, 1].set_ylabel("Deviation from SS")
+    # Inflation & Labor Response
+    fig_irf.add_trace(
+        go.Scatter(
+            x=t_grid_irf,
+            y=pi_irf,
+            mode='lines+markers',
+            name='Inflation',
+            line=dict(color='#00ff00', width=2),
+            marker=dict(symbol='diamond', size=5),
+            hovertemplate='Quarter: %{x}<br>Inflation: %{y:.4f}<extra></extra>'
+        ),
+        row=2, col=2
+    )
+    fig_irf.add_trace(
+        go.Scatter(
+            x=t_grid_irf,
+            y=n_irf,
+            mode='lines+markers',
+            name='Labor',
+            line=dict(color='#ff00ff', width=2),
+            marker=dict(symbol='triangle-up', size=5),
+            hovertemplate='Quarter: %{x}<br>Labor: %{y:.4f}<extra></extra>'
+        ),
+        row=2, col=2
+    )
 
-    fig2.patch.set_facecolor("#0b1020")
-    for ax in axes2.flatten():
-        ax.set_facecolor("#111827")
-        ax.tick_params(colors="white", labelsize=9)
-        for spine in ax.spines.values():
-            spine.set_color("white")
-        ax.title.set_color("white")
-        ax.yaxis.label.set_color("white")
-        ax.xaxis.label.set_color("white")
+    # Update layout for dark theme
+    fig_irf.update_layout(
+        height=700,
+        showlegend=True,
+        paper_bgcolor='#0b1020',
+        plot_bgcolor='#111827',
+        font=dict(color='white'),
+        hovermode='x unified',  # Shows all values at cursor position
+    )
 
-    plt.tight_layout()
-    st.pyplot(fig2)
+    # Update axes styling and add zero lines
+    for i in range(1, 3):
+        for j in range(1, 3):
+            fig_irf.update_xaxes(
+                gridcolor='rgba(255,255,255,0.1)',
+                zerolinecolor='rgba(255,255,255,0.5)',
+                row=i, col=j
+            )
+            fig_irf.update_yaxes(
+                gridcolor='rgba(255,255,255,0.1)',
+                zerolinecolor='rgba(255,255,255,0.5)',
+                row=i, col=j
+            )
+            # Add horizontal reference line at y=0
+            fig_irf.add_hline(y=0, line=dict(color='white', width=1, dash='dash'),
+                             opacity=0.7, row=i, col=j)
+
+    st.plotly_chart(fig_irf, use_container_width=True)
 
     # Automated policy briefing
     shock_label = {
@@ -799,3 +953,4 @@ with tab2:
 
     st.markdown("### 📋 Automated Policy Briefing")
     st.markdown(policy_brief)
+
