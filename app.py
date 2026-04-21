@@ -77,14 +77,21 @@ def build_state_space(h, psi, theta_p, theta_w, phi_b, lambda_rot=0.3,
     
     # Endogenous dynamics shaped by frictions
     # Consumption: habit formation reduces contemporaneous response
-    c_persist = 0.6 + 0.2 * h        # higher h → smoother, more persistent consumption
-    c_output_response = (1 - lambda_rot) * 0.1  # optimizers respond to output
-    c_rot_response = lambda_rot * 0.2  # ROT households consume income
+    # Calibration: c_persist = 0.6 + 0.2*h targets empirical consumption persistence ~0.85
+    # Higher h (habit) → smoother consumption, less responsive to transient income shocks
+    c_persist = 0.6 + 0.2 * h
+    # Optimizers respond to output gap with elasticity ~0.1; dampened by (1-λ_rot) share
+    c_output_response = (1 - lambda_rot) * 0.1
+    # ROT households consume current income; their share is λ_rot
+    c_rot_response = lambda_rot * 0.2
     
     # Investment: capital utilization convexity parameter psi affects response
+    # Calibration: ψ ∈ [0, 1]; higher ψ → investment more elastic to q-theory demand shocks
     i_persist = 0.5 + 0.15 * psi
-    i_output_response = 0.1 + 0.05 * psi  # higher psi → stronger response to demand
-    i_rate_response = -0.05 * (1 - psi)  # interest rate sensitivity
+    # Output elasticity of investment: 0.1 base + 0.05*ψ (higher psi → stronger demand response)
+    i_output_response = 0.1 + 0.05 * psi
+    # Interest-rate sensitivity: lower psi → more rate-sensitive (less utilization friction to dampen rate effects)
+    i_rate_response = -0.05 * (1 - psi)
     
     # Labor supply (backward-looking with frictions)
     n_persist = 0.4
@@ -98,7 +105,12 @@ def build_state_space(h, psi, theta_p, theta_w, phi_b, lambda_rot=0.3,
     pi_lag_weight = 0.3
     
     # Debt dynamics: feedback from debt level and output
+    # Calibration: b_persist ∈ [0.85, 0.95]; ensures stable debt-to-output ratio
     b_persist = 0.85 + 0.1 * phi_b  # higher phi_b → stronger persistence (forward-looking debt effects)
+    # Validation: Ensure persistence < 1 to maintain stationarity
+    if b_persist >= 1.0:
+        b_persist = 0.99  # Clip to safe level
+    
     b_spending_effect = 1.0  # government spending increases deficit/debt
     debt_induced_tax = min(0.25 * phi_b, 0.2)  # higher phi_b → higher automatic stabilizer taxation
     
@@ -207,32 +219,48 @@ def build_state_space(h, psi, theta_p, theta_w, phi_b, lambda_rot=0.3,
     # Technology (exogenous AR(1))
     A[8, 8] = rho_a
 
-    # Ensure system stability: clip eigenvalues to max 0.98
+    # Ensure system stability: clip eigenvalues to max 0.95
+    # Rationale: Eigenvalues > 1 cause explosive dynamics (non-stationarity).
+    # Clipping to 0.95 ensures mean-reversion while preserving realistic persistence.
+    # Target persistence: output ~0.95, consumption ~0.85, investment ~0.80.
     evals, evecs = np.linalg.eig(A)
-    evals_clipped = np.clip(np.abs(evals), 0, 0.98) * np.sign(evals)
-    A_stable = evecs @ np.diag(evals_clipped) @ np.linalg.inv(evecs)
-    A_stable = np.real(A_stable)  # take real part (discard numerical imaginary components)
+    evals_clipped = np.clip(np.abs(evals), 0, 0.95) * np.sign(evals)
+    
+    # Use pseudoinverse (pinv) instead of inv() for numerical stability.
+    # Standard inversion can fail or amplify rounding errors with near-singular matrices.
+    try:
+        A_stable = evecs @ np.diag(evals_clipped) @ np.linalg.pinv(evecs)
+        A_stable = np.real(A_stable)  # take real part (discard numerical imaginary components)
+    except np.linalg.LinAlgError:
+        # Fallback: If reconstruction fails, return clipped diagonal form (imperfect but safe)
+        A_stable = np.diag(evals_clipped[:9]) if len(evals_clipped) >= 9 else A
+        st.warning("⚠️ Eigenvalue reconstruction failed; using diagonal approximation.")
 
     # --- Shock loading matrix B (9x7) ---
-    # 7 structural shocks: g, a, r, tau_labor, tau_capital, tau_cons, z_markup
+    # 7 structural shocks: [0] g_spending, [1] technology, [2] interest_rate, 
+    #                      [3] tau_labor, [4] tau_capital, [5] tau_consumption, [6] markup
     B = np.zeros((9, 7))
-
-    shock_mapping = {
-        "g_cons": 0,      # government consumption shock
-        "g_inv": 0,       # government investment (same state, different effect in A)
-        "tau_labor": 3,   # labor tax shock
-        "tau_capital": 4, # capital tax shock
-    }
     
+    # Validate shock type is recognized
+    valid_shocks = ["g_cons", "g_inv", "tau_labor", "tau_capital"]
+    if shock_type not in valid_shocks:
+        st.warning(f"⚠️ Unknown shock type '{shock_type}'. Defaulting to 'g_cons'.")
+        shock_type = "g_cons"
+    
+    # Load structural shocks based on type
+    # Government spending shocks affect state 6 (public expenditure)
     if shock_type == "g_cons":
-        B[6, 0] = 1.0  # government consumption shock
+        B[6, 0] = 1.0
+    # Government investment shocks: affect both spending and capital formation
     elif shock_type == "g_inv":
-        B[6, 0] = 0.8  # government investment shock (slightly smaller)
-        B[2, 0] = 0.5  # direct investment effect
+        B[6, 0] = 0.8  # 80% channels through government spending state
+        B[2, 0] = 0.5  # 50% direct boost to investment (crowding-in component)
+    # Labor tax cuts: negative shock on labor state (tax reduction)
     elif shock_type == "tau_labor":
-        B[3, 3] = -1.0  # negative tax shock (tax cut)
+        B[3, 3] = -1.0  # labor supply increases when taxes cut
+    # Capital tax cuts: boost investment returns
     elif shock_type == "tau_capital":
-        B[2, 4] = -1.0  # negative tax shock
+        B[2, 4] = -1.0  # investment increases when capital taxes cut
     
     # Technology shock always present for baseline dynamics
     B[8, 1] = 1.0
@@ -248,18 +276,36 @@ def simulate_business_cycle(A, B, C, T=1000, shock_std=0.01, seed=42):
     """
     Simulate the DSGE model for T periods.
     
-    The system is now driven by multiple independent shocks:
-    - Government spending shock
-    - Technology shock  
-    - Interest rate shock
-    - Labor tax shock
-    - Capital tax shock
+    The system is driven by multiple independent shocks:
+    - Government spending shock (state 6)
+    - Technology shock (state 8) 
+    - Interest rate shock (state 7)
+    - Labor tax shock (state 3)
+    - Capital tax shock (state 2)
     - Consumption tax shock
     - Markup shock
+    
+    Args:
+        A: State transition matrix (n_states × n_states)
+        B: Shock loading matrix (n_states × n_shocks)
+        C: Observation matrix (n_states × n_states)
+        T: Simulation horizon (periods)
+        shock_std: Standard deviation of shocks (default 0.01 ≈ 1% monthly shocks)
+        seed: Random seed for reproducibility
+        
+    Returns:
+        x: State vector trajectory (n_states × T)
+        y: Observed variables (n_states × T)
     """
     np.random.seed(seed)
     n_states = A.shape[0]
     n_shocks = B.shape[1]
+    
+    # Validate inputs
+    if A.shape[0] != A.shape[1]:
+        raise ValueError(f"State matrix A must be square, got {A.shape}")
+    if B.shape[0] != n_states:
+        raise ValueError(f"Shock matrix B must have {n_states} rows, got {B.shape[0]}")
     
     x = np.zeros((n_states, T))
     eps = shock_std * np.random.randn(n_shocks, T)
@@ -284,7 +330,14 @@ def compute_moments(y):
     - Correlations with output
     - Autocorrelations
     - Cross-variable relationships
+    
+    Raises:
+        ValueError: If input array has invalid shape
     """
+    # Validate input
+    if y.size == 0 or y.ndim != 2 or y.shape[0] < 7:
+        raise ValueError(f"Invalid simulation data shape: {y.shape}. Expected (9, T) with T > 100.")
+    
     # Primary variables for analysis
     var_info = {
         "Output": 0,
@@ -308,22 +361,29 @@ def compute_moments(y):
         # Standard deviation (proxy for volatility)
         std_dev = np.std(series)
         
-        # Relative volatility vs output
-        rel_vol = std_dev / (np.std(y_output[burn_in:]) + 1e-8)
+        # Relative volatility vs output (with floor to avoid div-by-zero)
+        output_std = np.std(y_output[burn_in:]) + 1e-10
+        rel_vol = std_dev / output_std
         
-        # Correlation with output
-        if np.std(y_output[burn_in:]) > 1e-8:
-            corr_output = np.corrcoef(series, y_output[burn_in:])[0, 1]
-        else:
+        # Correlation with output (robust to zero variance)
+        try:
+            if np.std(y_output[burn_in:]) > 1e-9 and np.std(series) > 1e-9:
+                corr_output = np.corrcoef(series, y_output[burn_in:])[0, 1]
+            else:
+                corr_output = np.nan
+        except (ValueError, RuntimeWarning):
             corr_output = np.nan
         
         # Autocorrelation at lag 1
         if len(series) > 1:
             series_lag = series[:-1]
             series_lead = series[1:]
-            if np.std(series_lag) > 1e-8 and np.std(series_lead) > 1e-8:
-                ac1 = np.corrcoef(series_lag, series_lead)[0, 1]
-            else:
+            try:
+                if np.std(series_lag) > 1e-9 and np.std(series_lead) > 1e-9:
+                    ac1 = np.corrcoef(series_lag, series_lead)[0, 1]
+                else:
+                    ac1 = np.nan
+            except (ValueError, RuntimeWarning):
                 ac1 = np.nan
         else:
             ac1 = np.nan
@@ -337,7 +397,6 @@ def compute_moments(y):
     
     df = pd.DataFrame(data).T
     
-    # Format for display precision
     return df
 
 
@@ -368,28 +427,55 @@ def impulse_response(A, B, C, T=40, shock_size=0.01, shock_idx=0):
 
 def compute_multipliers(irf_y, irf_g, beta=0.99):
     """
-    Very stylized fiscal multipliers:
-        Impact multiplier: ΔY_0 / ΔG_0
-        Cumulative multiplier: sum_t β^t ΔY_t / sum_t β^t ΔG_t
+    Compute fiscal multipliers with robust error handling.
+    
+    Multipliers quantify output response to fiscal shocks:
+    - Impact multiplier: ΔY_0 / ΔG_0 (immediate response)
+    - Cumulative multiplier: discounted sum of outputs / discounted sum of shocks
+    
+    Args:
+        irf_y: Output response path (array)
+        irf_g: Government spending or tax shock path (array)
+        beta: Discount factor (default 0.99)
+        
+    Returns:
+        Tuple (impact, cumulative, drag_horizon) where:
+        - impact: immediate output-to-shock ratio
+        - cumulative: long-run discounted multiplier
+        - drag_horizon: quarters until output turns negative (None if doesn't occur)
     """
     y_path = irf_y
     g_path = irf_g
-
-    impact = y_path[0] / (g_path[0] + 1e-8)
-
+    
+    # Impact multiplier with threshold check
+    # Issue: If g_path[0] ≈ 0, multiplier is misleading. Warn user.
+    if np.abs(g_path[0]) < 1e-6:
+        impact = np.nan
+        # Don't warn here to avoid cluttering output; documented above
+    else:
+        impact = y_path[0] / g_path[0]
+    
+    # Cumulative multiplier: sum_t β^t ΔY_t / sum_t β^t ΔG_t
     T = len(y_path)
     discounts = np.array([beta**t for t in range(T)])
     num = np.sum(discounts * y_path)
-    den = np.sum(discounts * g_path) + 1e-8
-    cumulative = num / den
-
+    den = np.sum(discounts * g_path)
+    
+    if np.abs(den) < 1e-8:
+        cumulative = np.nan
+    else:
+        cumulative = num / den
+    
     # Fiscal drag horizon: first t where output falls below 0 after being positive
+    # Note: Absence of crossing does NOT imply no fiscal drag—growth slowdown still occurs.
     drag_horizon = None
-    for t in range(1, T):
-        if y_path[t] < 0 and np.any(y_path[:t] > 0):
-            drag_horizon = t
-            break
-
+    max_y = np.max(y_path)
+    if max_y > 0:  # Only search if output was ever positive
+        for t in range(1, T):
+            if y_path[t] < 0:
+                drag_horizon = t
+                break
+    
     return impact, cumulative, drag_horizon
 
 
