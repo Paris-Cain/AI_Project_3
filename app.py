@@ -138,6 +138,31 @@ def build_state_space(h, psi, theta_p, theta_w, phi_b, lambda_rot=0.3,
         tax_on_capital = 0.18
         tax_on_labor = 0.0
         tax_on_cons = 0.0
+    elif financing_rule == "income_tax":
+        # Broad-based income tax: affects both labor and capital income
+        tax_on_labor = 0.10
+        tax_on_capital = 0.08
+        tax_on_cons = 0.0
+    elif financing_rule == "debt_targeting":
+        # Debt-to-GDP targeting: stronger feedback when debt is high
+        tax_on_labor = min(0.20 * phi_b, 0.15)
+        tax_on_capital = min(0.15 * phi_b, 0.12)
+        tax_on_cons = 0.0
+    elif financing_rule == "automatic_stabilizer":
+        # Progressive taxation: taxes rise with output, spending rises with unemployment
+        tax_on_labor = 0.08
+        tax_on_capital = 0.05
+        tax_on_cons = 0.03
+    elif financing_rule == "balanced_budget":
+        # Immediate spending adjustment to offset shocks
+        tax_on_labor = 0.0
+        tax_on_capital = 0.0
+        tax_on_cons = 0.0
+    elif financing_rule == "inflation_tax":
+        # Seigniorage: government prints money (only relevant with monetary block)
+        tax_on_labor = 0.0
+        tax_on_capital = 0.0
+        tax_on_cons = 0.0
     elif financing_rule == "g_cuts":
         # Future spending cuts unwind stimulus
         tax_on_labor = 0.0
@@ -205,12 +230,27 @@ def build_state_space(h, psi, theta_p, theta_w, phi_b, lambda_rot=0.3,
     A[5, 0] = -debt_induced_tax  # output growth reduces deficit (automatic stabilizer)
     
     # Debt stabilization depends on financing rule
-    if financing_rule != "lump_sum":
+    if financing_rule == "debt_targeting":
+        # Stronger debt feedback for debt-to-GDP targeting
+        A[5, 5] = min(b_persist + 0.1 * phi_b, 0.95)  # more persistent debt dynamics
+        A[5, 0] += -(tax_on_labor * 0.20 + tax_on_capital * 0.15)  # stronger automatic stabilizers
+    elif financing_rule == "balanced_budget":
+        # Immediate spending adjustment - debt doesn't accumulate
+        A[5, 5] = 0.0  # no persistence
+        A[5, 6] = 0.0  # spending doesn't affect debt (offset by immediate cuts)
+        A[5, 0] = 0.0  # no automatic stabilizers needed
+    elif financing_rule == "automatic_stabilizer":
+        # Progressive taxation - stronger response to output fluctuations
+        A[5, 0] += -(tax_on_labor * 0.12 + tax_on_capital * 0.08 + tax_on_cons * 0.05)
+    elif financing_rule != "lump_sum":
         # Distortionary taxes generate tax revenue
         A[5, 0] += -(tax_on_labor * 0.15 + tax_on_capital * 0.10 + tax_on_cons * 0.20)
 
     # Government spending (exogenous AR(1) process)
-    A[6, 6] = rho_g
+    if shock_type == "g_infrastructure":
+        A[6, 6] = min(rho_g + 0.3, 0.95)  # More persistent for infrastructure
+    else:
+        A[6, 6] = rho_g
 
     # Real interest rate (monetary policy AR(1), assumed exogenous for real rate)
     A[7, 7] = rho_r
@@ -238,13 +278,15 @@ def build_state_space(h, psi, theta_p, theta_w, phi_b, lambda_rot=0.3,
         A_stable = np.diag(evals_clipped[:9]) if len(evals_clipped) >= 9 else A
         st.warning("⚠️ Eigenvalue reconstruction failed; using diagonal approximation.")
 
-    # --- Shock loading matrix B (9x7) ---
-    # 7 structural shocks: [0] g_spending, [1] technology, [2] interest_rate, 
-    #                      [3] tau_labor, [4] tau_capital, [5] tau_consumption, [6] markup
-    B = np.zeros((9, 7))
+    # --- Shock loading matrix B (9x10) ---
+    # 10 structural shocks: [0] g_spending, [1] technology, [2] interest_rate, 
+    #                      [3] tau_labor, [4] tau_capital, [5] tau_consumption, [6] markup,
+    #                      [7] g_wage_bill, [8] g_infrastructure, [9] lump_sum_transfer
+    B = np.zeros((9, 10))
     
     # Validate shock type is recognized
-    valid_shocks = ["g_cons", "g_inv", "tau_labor", "tau_capital"]
+    valid_shocks = ["g_cons", "g_inv", "tau_labor", "tau_capital", "tau_consumption", 
+                   "tau_corporate", "g_wage_bill", "g_infrastructure", "lump_sum_transfer", "gov_borrowing_cost"]
     if shock_type not in valid_shocks:
         st.warning(f"⚠️ Unknown shock type '{shock_type}'. Defaulting to 'g_cons'.")
         shock_type = "g_cons"
@@ -257,12 +299,39 @@ def build_state_space(h, psi, theta_p, theta_w, phi_b, lambda_rot=0.3,
     elif shock_type == "g_inv":
         B[6, 0] = 0.8  # 80% channels through government spending state
         B[2, 0] = 0.5  # 50% direct boost to investment (crowding-in component)
+    # Government wage bill: increases public sector wages, affects labor market tightness
+    elif shock_type == "g_wage_bill":
+        B[6, 7] = 0.6  # 60% through government spending
+        B[3, 7] = 0.4  # 40% direct effect on labor market (wage pressure)
+        B[4, 7] = 0.2  # inflationary pressure from wage increases
+    # Government infrastructure: long-lived capital spending, more persistent
+    elif shock_type == "g_infrastructure":
+        B[6, 8] = 0.7  # 70% through government spending
+        B[2, 8] = 0.8  # 80% direct boost to investment (infrastructure investment)
+        # More persistent - handled in A matrix with higher rho_g for infrastructure
     # Labor tax cuts: negative shock on labor state (tax reduction)
     elif shock_type == "tau_labor":
         B[3, 3] = -1.0  # labor supply increases when taxes cut
     # Capital tax cuts: boost investment returns
     elif shock_type == "tau_capital":
         B[2, 4] = -1.0  # investment increases when capital taxes cut
+    # Consumption tax cuts: boost consumption directly
+    elif shock_type == "tau_consumption":
+        B[1, 5] = -0.8  # consumption increases when VAT/sales taxes cut
+        B[0, 5] = -0.2  # some direct output effect
+    # Corporate profit tax cuts: boost investment and dividends
+    elif shock_type == "tau_corporate":
+        B[2, 4] = -0.7  # investment boost (similar to capital tax but corporate-focused)
+        B[1, 5] = -0.3  # consumption effect from higher dividends/profits
+    # Lump-sum transfers: direct transfers to households (powerful with ROT households)
+    elif shock_type == "lump_sum_transfer":
+        B[1, 9] = lambda_rot * 0.9  # strong effect on ROT households
+        B[1, 9] += (1 - lambda_rot) * 0.3  # weaker effect on optimizers
+        B[0, 9] = 0.1  # small direct output effect
+    # Government borrowing cost shock: increases interest rate govt pays
+    elif shock_type == "gov_borrowing_cost":
+        B[7, 2] = 0.5  # affects market interest rate
+        B[5, 2] = 0.3  # affects debt servicing costs
     
     # Technology shock always present for baseline dynamics
     B[8, 1] = 1.0
@@ -427,35 +496,36 @@ def impulse_response(A, B, C, T=40, shock_size=0.01, shock_idx=0):
     return x, y
 
 
-def compute_multipliers(irf_y, irf_g, beta=0.99):
+def compute_multipliers(irf_y, irf_g, beta=0.99, impact_period=0):
     """
     Compute fiscal multipliers with robust error handling.
     
     Multipliers quantify output response to fiscal shocks:
-    - Impact multiplier: ΔY_0 / ΔG_0 (immediate response)
+    - Impact multiplier: ΔY_t / ΔG_t at specified period t
     - Cumulative multiplier: discounted sum of outputs / discounted sum of shocks
     
     Args:
         irf_y: Output response path (array)
         irf_g: Government spending or tax shock path (array)
         beta: Discount factor (default 0.99)
+        impact_period: Period t to use for impact multiplier (default 0)
         
     Returns:
         Tuple (impact, cumulative, drag_horizon) where:
-        - impact: immediate output-to-shock ratio
+        - impact: output-to-shock ratio at period t
         - cumulative: long-run discounted multiplier
         - drag_horizon: quarters until output turns negative (None if doesn't occur)
     """
     y_path = irf_y
     g_path = irf_g
     
-    # Impact multiplier with threshold check
-    # Issue: If g_path[0] ≈ 0, multiplier is misleading. Warn user.
-    if np.abs(g_path[0]) < 1e-6:
+    # Impact multiplier at specified period with threshold check
+    # Issue: If g_path[t] ≈ 0, multiplier is misleading. Warn user.
+    if impact_period >= len(g_path) or np.abs(g_path[impact_period]) < 1e-6:
         impact = np.nan
         # Don't warn here to avoid cluttering output; documented above
     else:
-        impact = y_path[0] / g_path[0]
+        impact = y_path[impact_period] / g_path[impact_period]
     
     # Cumulative multiplier: sum_t β^t ΔY_t / sum_t β^t ΔG_t
     T = len(y_path)
@@ -704,19 +774,39 @@ with tab2:
     col1, col2 = st.columns(2)
 
     with col1:
+        shock_category = st.selectbox(
+            "Fiscal Shock Category",
+            ["spending", "tax", "transfer", "other"],
+            format_func=lambda x: {
+                "spending": "Spending Shocks",
+                "tax": "Tax Shocks", 
+                "transfer": "Transfer Shocks",
+                "other": "Other Shocks"
+            }[x],
+        )
+        
+        # Dynamic shock type options based on category
+        shock_options = {
+            "spending": ["g_cons", "g_inv", "g_wage_bill", "g_infrastructure"],
+            "tax": ["tau_labor", "tau_capital", "tau_consumption", "tau_corporate"],
+            "transfer": ["lump_sum_transfer"],
+            "other": ["gov_borrowing_cost"]
+        }
+        
         shock_type = st.selectbox(
             "Fiscal Shock Type",
-            [
-                "g_cons",
-                "g_inv",
-                "tau_labor",
-                "tau_capital",
-            ],
+            shock_options[shock_category],
             format_func=lambda x: {
                 "g_cons": "↑ Government Consumption Spending",
-                "g_inv": "↑ Government Investment Spending",
+                "g_inv": "↑ Government Investment Spending", 
+                "g_wage_bill": "↑ Government Wage Bill (Public Sector Pay)",
+                "g_infrastructure": "↑ Government Infrastructure Investment",
                 "tau_labor": "↓ Labor Taxes (Tax Cut)",
                 "tau_capital": "↓ Capital Taxes (Tax Cut)",
+                "tau_consumption": "↓ Consumption Taxes (VAT/Sales Tax Cut)",
+                "tau_corporate": "↓ Corporate Profit Taxes (Tax Cut)",
+                "lump_sum_transfer": "↑ Lump-Sum Transfers (Stimulus Checks)",
+                "gov_borrowing_cost": "↑ Government Borrowing Costs (Sovereign Risk)"
             }[x],
         )
 
@@ -726,16 +816,26 @@ with tab2:
             [
                 "lump_sum",
                 "cons_tax",
-                "labor_tax",
+                "labor_tax", 
                 "capital_tax",
+                "income_tax",
                 "g_cuts",
+                "debt_targeting",
+                "automatic_stabilizer",
+                "balanced_budget",
+                "inflation_tax"
             ],
             format_func=lambda x: {
                 "lump_sum": "Ricardian (Non-distortionary) Lump-Sum Transfers",
                 "cons_tax": "Consumption Tax Hikes",
                 "labor_tax": "Labor Tax Hikes",
                 "capital_tax": "Capital Tax Hikes",
+                "income_tax": "Broad-Based Income Tax Hikes",
                 "g_cuts": "Future Government Spending Cuts",
+                "debt_targeting": "Debt-to-GDP Targeting Rule",
+                "automatic_stabilizer": "Automatic Stabilizers (Progressive Taxation)",
+                "balanced_budget": "Balanced Budget Rule",
+                "inflation_tax": "Inflation Tax (Seigniorage)"
             }[x],
         )
 
@@ -751,13 +851,20 @@ with tab2:
     )
 
     T_irf = st.slider("IRF Horizon (quarters)", 10, 80, 40, 5)
+    impact_period = st.slider("Impact period (t)", 0, 10, 1, 1)
     
     # Map shock types to shock indices in B matrix
     shock_idx_map = {
-        "g_cons": 0,      # government spending shock
-        "g_inv": 0,       # also government spending (modified in A)
-        "tau_labor": 3,   # labor tax shock
-        "tau_capital": 4, # capital tax shock
+        "g_cons": 0,           # government spending shock
+        "g_inv": 0,            # also government spending (modified in A)
+        "g_wage_bill": 7,      # government wage bill shock
+        "g_infrastructure": 8, # government infrastructure shock
+        "tau_labor": 3,        # labor tax shock
+        "tau_capital": 4,      # capital tax shock
+        "tau_consumption": 5,  # consumption tax shock
+        "tau_corporate": 4,    # corporate tax shock (similar to capital tax)
+        "lump_sum_transfer": 9,# lump-sum transfer shock
+        "gov_borrowing_cost": 2 # government borrowing cost shock
     }
     shock_idx = shock_idx_map.get(shock_type, 0)
     
@@ -774,7 +881,7 @@ with tab2:
     r_irf = y_irf[7, :]         # Interest Rate
     a_irf = y_irf[8, :]         # Technology
 
-    impact_mult, cum_mult, drag_horizon = compute_multipliers(y_gap_irf, g_irf, beta=0.99)
+    impact_mult, cum_mult, drag_horizon = compute_multipliers(y_gap_irf, g_irf, beta=0.99, impact_period=impact_period)
 
     st.subheader("📊 Fiscal Multipliers & Key Statistics")
     colm1, colm2, colm3 = st.columns(3)
@@ -912,8 +1019,14 @@ with tab2:
     shock_label = {
         "g_cons": "an increase in government consumption spending",
         "g_inv": "an increase in government investment spending",
+        "g_wage_bill": "an increase in government wage bill (public sector pay raises)",
+        "g_infrastructure": "an increase in government infrastructure investment (roads, bridges)",
         "tau_labor": "a cut in labor taxes (positive supply shock to labor)",
         "tau_capital": "a cut in capital taxes (positive incentive to invest)",
+        "tau_consumption": "a cut in consumption taxes (VAT/sales tax reduction)",
+        "tau_corporate": "a cut in corporate profit taxes (boost to business investment)",
+        "lump_sum_transfer": "lump-sum transfers to households (stimulus checks)",
+        "gov_borrowing_cost": "an increase in government borrowing costs (sovereign risk shock)"
     }[shock_type]
 
     finance_label = {
@@ -921,7 +1034,12 @@ with tab2:
         "cons_tax": "consumption tax hikes that directly dampen household demand and reduce disposable income",
         "labor_tax": "labor income tax hikes that discourage hours worked and reduce labor supply",
         "capital_tax": "capital income tax hikes that lower the after-tax return on investment and depress capital formation",
+        "income_tax": "broad-based income tax hikes affecting both labor and capital income",
         "g_cuts": "future government spending cuts that unwind the initial fiscal expansion",
+        "debt_targeting": "debt-to-GDP targeting that adjusts taxes/spending to return debt to target levels",
+        "automatic_stabilizer": "automatic stabilizers with progressive taxation that strengthen during downturns",
+        "balanced_budget": "balanced budget rule requiring immediate spending adjustments to offset shocks",
+        "inflation_tax": "inflation tax (seigniorage) through monetary financing of deficits"
     }[financing_rule]
 
     if drag_horizon is not None:
@@ -953,4 +1071,3 @@ with tab2:
 
     st.markdown("### 📋 Automated Policy Briefing")
     st.markdown(policy_brief)
-
