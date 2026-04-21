@@ -1,5 +1,8 @@
 # AI_Project_3
 Quick Start 
+pip install -r requirements.txt
+streamlit run app.py
+
 # Install dependencies
 pip install streamlit numpy pandas scipy matplotlib
 
