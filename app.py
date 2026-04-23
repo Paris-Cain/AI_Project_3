@@ -4,6 +4,7 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import io
 
 from scipy.linalg import eig
 
@@ -763,6 +764,56 @@ with tab1:
 
     st.plotly_chart(fig, use_container_width=True)
 
+    # CSV Download Functionality for Tab 1
+    @st.cache_data
+    def create_simulation_csv(t_grid, y_sim, moments_df, T_sim, h, psi, theta_p, theta_w, phi_b, lambda_rot):
+        """Create CSV data from simulation results and moments."""
+        # Time series data
+        df_ts = pd.DataFrame({
+            'Period': t_grid,
+            'Output_Gap': y_sim[0, :],
+            'Consumption': y_sim[1, :],
+            'Investment': y_sim[2, :],
+            'Labor': y_sim[3, :],
+            'Inflation': y_sim[4, :],
+            'Government_Debt': y_sim[5, :],
+            'Government_Spending': y_sim[6, :],
+            'Interest_Rate': y_sim[7, :],
+            'Technology': y_sim[8, :]
+        })
+
+        # Moments data (transpose for better CSV format)
+        df_moments = moments_df.T.reset_index().rename(columns={'index': 'Variable'})
+
+        # Create CSV with metadata
+        csv_header = f"# DSGE Business Cycle Simulation Data\n"
+        csv_header += f"# Simulation Horizon: {T_sim} periods\n"
+        csv_header += f"# Parameters: h={h:.2f}, psi={psi:.2f}, theta_p={theta_p:.2f}, theta_w={theta_w:.2f}, phi_b={phi_b:.2f}, lambda_rot={lambda_rot:.2f}\n"
+        csv_header += f"# Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        csv_header += "#\n"
+        csv_header += "# TIME SERIES DATA\n"
+        csv_header += "#\n"
+        csv_ts = df_ts.to_csv(index=False)
+
+        csv_header += "# BUSINESS CYCLE MOMENTS\n"
+        csv_header += "#\n"
+        csv_moments = df_moments.to_csv(index=False)
+
+        return csv_header + csv_ts + "\n\n" + csv_moments
+
+    # Create download button for Tab 1
+    csv_data_tab1 = create_simulation_csv(
+        t_grid, y_sim, moments_df, T_sim, h, psi, theta_p, theta_w, phi_b, lambda_rot
+    )
+
+    st.download_button(
+        label="📥 Download Simulation Data as CSV",
+        data=csv_data_tab1,
+        file_name=f"dsge_simulation_{T_sim}periods_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        mime="text/csv",
+        help="Download the business cycle simulation data and moments as a CSV file"
+    )
+
 
 # =========================
 #   TAB 2: FISCAL EXERCISES
@@ -1024,6 +1075,44 @@ with tab2:
                              opacity=0.7, row=i, col=j)
 
     st.plotly_chart(fig_irf, use_container_width=True)
+
+    # CSV Download Functionality
+    @st.cache_data
+    def create_irf_csv(t_grid, y_gap, c, i, n, pi, b, g, r, a, shock_type, financing_rule):
+        """Create CSV data from IRF results."""
+        df = pd.DataFrame({
+            'Quarter': t_grid,
+            'Output_Gap': y_gap,
+            'Consumption': c,
+            'Investment': i,
+            'Labor': n,
+            'Inflation': pi,
+            'Government_Debt': b,
+            'Government_Spending': g,
+            'Interest_Rate': r,
+            'Technology': a
+        })
+        # Add metadata as comments at the top
+        csv_header = f"# DSGE Fiscal Policy IRF Data\n"
+        csv_header += f"# Shock Type: {shock_type}\n"
+        csv_header += f"# Financing Rule: {financing_rule}\n"
+        csv_header += f"# Generated: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        csv_header += "#\n"
+        return csv_header + df.to_csv(index=False)
+
+    # Create download button
+    csv_data = create_irf_csv(
+        t_grid_irf, y_gap_irf, c_irf, i_irf, n_irf, pi_irf,
+        b_irf, g_irf, r_irf, a_irf, shock_type, financing_rule
+    )
+
+    st.download_button(
+        label="📥 Download IRF Data as CSV",
+        data=csv_data,
+        file_name=f"dsge_irf_{shock_type}_{financing_rule}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+        mime="text/csv",
+        help="Download the impulse response function data for all variables as a CSV file"
+    )
 
     # Automated policy briefing
     shock_label = {
